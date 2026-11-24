@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>বাংলা TTS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600&family=Noto+Serif+Bengali:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#eef2f1; --surface:#fbfdfc; --ink:#14262b; --muted:#5d6f73; --line:#cfdad8;
+  --accent:#0f7b6c; --accent-ink:#fff; --danger:#b3261e;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#0f1a1c; --surface:#152326; --ink:#e6efee; --muted:#8fa5a8; --line:#264044; --accent:#3fc0ab; --accent-ink:#06211c; --danger:#ff8a80; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.6 "Hind Siliguri",system-ui,sans-serif;min-height:100vh;display:flex;justify-content:center;padding:32px 16px}
+main{width:100%;max-width:680px}
+h1{font:700 34px/1.2 "Noto Serif Bengali",serif;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 28px}
+label{display:block;font-weight:500;font-size:14px;margin:0 0 6px}
+textarea,input,select{width:100%;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+textarea{min-height:200px;resize:vertical;font-size:19px;line-height:1.7}
+textarea:focus,input:focus,select:focus,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+@media(max-width:520px){.row{grid-template-columns:1fr}}
+.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:13px;margin-top:6px}
+button.go{margin-top:20px;width:100%;padding:13px;border:0;border-radius:8px;background:var(--accent);color:var(--accent-ink);font:600 17px "Hind Siliguri",sans-serif;cursor:pointer}
+button.go:disabled{opacity:.55;cursor:wait}
+#out{margin-top:24px;display:none}
+audio{width:100%}
+.dl{display:inline-block;margin-top:8px;color:var(--accent);font-weight:500}
+#err{color:var(--danger);margin-top:16px;white-space:pre-wrap;display:none}
+details{margin-top:24px;border-top:1px solid var(--line);padding-top:14px}
+summary{cursor:pointer;color:var(--muted);font-size:14px}
+details input{margin-top:10px}
+.hint{font-size:13px;color:var(--muted);margin:6px 0 0}
+</style>
+</head>
+<body>
+<main>
+  <h1>বাংলা TTS</h1>
+  <p class="sub">লিখুন, শুনুন। Gemini 3.8 TTS দিয়ে স্বাভাবিক বাংলা কণ্ঠ।</p>
+
+  <label for="text">টেক্সট</label>
+  <textarea id="text" maxlength="4000" placeholder="এখানে বাংলা লিখুন…">আপনি কেমন আছেন? আজকের আবহাওয়াটা সত্যিই সুন্দর।</textarea>
+  <div class="meta"><span id="count">0</span><span>বিরতির জন্য &lt;short pause&gt; লিখুন</span></div>
+
+  <div class="row">
+    <div>
+      <label for="voice">কণ্ঠ</label>
+      <select id="voice"></select>
+    </div>
+    <div>
+      <label for="model">মডেল</label>
+      <select id="model">
+        <option value="gemini-3.8-flash-tts">3.8 Flash — সেরা মান</option>
+        <option value="gemini-3.8-flash-lite-tts">3.8 Flash-Lite — দ্রুত, সস্তা</option>
+      </select>
+    </div>
+  </div>
+
+  <div style="margin-top:16px">
+    <label for="style">ধরন (ঐচ্ছিক, ইংরেজিতে)</label>
+    <input id="style" placeholder="e.g. warm, calm, speaking slowly">
+  </div>
+
+  <button class="go" id="go">অডিও তৈরি করুন</button>
+  <div id="err" role="alert"></div>
+
+  <div id="out">
+    <audio id="player" controls></audio>
+    <a class="dl" id="dl" download="bangla-tts.wav">WAV ডাউনলোড</a>
+  </div>
+
+  <details id="keybox">
+    <summary>API key</summary>
+    <input id="key" type="password" placeholder="Google AI Studio API key" autocomplete="off">
+    <p class="hint">শুধু এই ব্রাউজারে সংরক্ষিত থাকে। Google ছাড়া কোথাও যায় না।</p>
+  </details>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const API = "https://generativelanguage.googleapis.com/v1beta";
+const FALLBACK = ["Kore","Sulafat","Achernar","Zephyr","Puck","Charon","Aoede","Leda","Orus","Algieba","Gacrux","Vindemiatrix"];
+
+try { $("key").value = localStorage.getItem("gkey") || ""; } catch(e){}
+if (!$("key").value) $("keybox").open = true;
+$("key").addEventListener("change", () => { try { localStorage.setItem("gkey", $("key").value.trim()); } catch(e){} loadVoices(); });
+
+const upd = () => $("count").textContent = $("text").value.length + " / 4000";
+$("text").addEventListener("input", upd); upd();
+
+function fillVoices(items, label){
+  const sel = $("voice"); sel.innerHTML = "";
+  const g = document.createElement("optgroup"); g.label = label;
+  items.forEach(v => { const o = document.createElement("option"); o.value = v.id; o.textContent = v.name; g.appendChild(o); });
+  sel.appendChild(g);
+}
+fillVoices(FALLBACK.map(n => ({id:n, name:n})), "Prebuilt");
+
+async function loadVoices(){
+  const k = $("key").value.trim(); if (!k) return;
+  try {
+    const r = await fetch(`${API}/voices?language_code=bn-BD&page_size=100`, {headers:{"x-goog-api-key":k}});
+    if (!r.ok) return;
+    const j = await r.json();
+    const vs = (j.voices || []).map(v => ({id:v.id || v.name, name:(v.display_name || v.id) + (v.gender ? ` (${v.gender})` : "")}));
+    if (vs.length) fillVoices(vs, "বাংলা কণ্ঠ");
+  } catch(e){}
+}
+loadVoices();
+
+function showErr(m){ $("err").textContent = m; $("err").style.display = m ? "block" : "none"; }
+
+$("go").addEventListener("click", async () => {
+  const key = $("key").value.trim(), text = $("text").value.trim();
+  showErr("");
+  if (!key){ $("keybox").open = true; return showErr("API key দিন।"); }
+  if (!text) return showErr("টেক্সট লিখুন।");
+  try { localStorage.setItem("gkey", key); } catch(e){}
+
+  const ann = {type:"speech_metadata"};
+  const st = $("style").value.trim(); if (st) ann.style = st;
+
+  const body = {
+    model: $("model").value,
+    input: [{type:"user_input", content:[{type:"text", text, annotations:[ann]}]}],
+    response_format: {type:"audio"},
+    generation_config: {speech_config: [{voice: $("voice").value}]}
+  };
+
+  $("go").disabled = true; $("go").textContent = "তৈরি হচ্ছে…";
+  try {
+    const r = await fetch(`${API}/interactions`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-goog-api-key":key},
+      body: JSON.stringify(body)
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error?.message || ("HTTP " + r.status));
+    const audios = (j.steps || []).flatMap(s => s.content || []).filter(c => c.type === "audio" && c.data);
+    if (!audios.length) throw new Error("No audio returned.\n" + JSON.stringify(j).slice(0, 400));
+    const bin = atob(audios[audios.length-1].data);
+    const buf = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([buf], {type:"audio/wav"}));
+    $("player").src = url; $("dl").href = url; $("out").style.display = "block";
+    $("player").play().catch(()=>{});
+  } catch(e){
+    showErr(e.message);
+  } finally {
+    $("go").disabled = false; $("go").textContent = "অডিও তৈরি করুন";
+  }
+});
+</script>
+</body>
+</html>
